@@ -23,10 +23,10 @@ microseconds, not *"is this repository clean?"*.
 
 ## Two tiers, opposite error budgets
 
-| Tier | Cost | Deps | Errs toward | Use |
-|------|------|------|-------------|-----|
-| `is_probably_secret(&str) -> bool` | ~µs | none | **flagging** — a kept API key is worse than a forgotten hash | drop/keep decisions (clipboards, prompts) |
-| `scan(&str) -> Vec<Finding>` | one regex pass | `regex` (feature `rules`) | **silence** — a finding pages a human | reporting, redaction, dashboards |
+| Tier                               | Cost           | Deps                      | Errs toward                                                  | Use                                       |
+|------------------------------------|----------------|---------------------------|--------------------------------------------------------------|-------------------------------------------|
+| `is_probably_secret(&str) -> bool` | ~µs            | none                      | **flagging** — a kept API key is worse than a forgotten hash | drop/keep decisions (clipboards, prompts) |
+| `scan(&str) -> Vec<Finding>`       | one regex pass | `regex` (feature `rules`) | **silence** — a finding pages a human                        | reporting, redaction, dashboards          |
 
 The tiers are calibrated against each other on purpose. The bool tier may
 false-positive freely; the rule tier may not — its 50 rules all anchor on a
@@ -35,7 +35,7 @@ only available as an explicit opt-in (`Scanner::include_heuristics`).
 
 ## Usage
 
-### Clipboard guard (the funke use case)
+### Clipboard guard
 
 ```rust
 // Dependency-free: works with `default-features = false`.
@@ -58,7 +58,7 @@ assert_eq!(
 // Clean lines come back as Cow::Borrowed — no allocation on the hot path.
 ```
 
-### Structured findings (dashboards, CI)
+### Structured findings
 
 ```rust
 use secretshape::{Scanner, Severity};
@@ -115,13 +115,13 @@ async fn scrub_errors(req: Request, next: Next) -> Response {
 
 Different jobs:
 
-| Tool | What it is | What it answers |
-|------|-----------|-----------------|
-| [gitleaks](https://github.com/gitleaks/gitleaks) | CLI, Go | "is this repo/git-history clean?" |
-| [ripsecrets](https://github.com/sirwart/ripsecrets) | CLI, Rust | "am I about to commit a secret?" |
-| [trufflehog](https://github.com/trufflesecurity/trufflehog) | CLI, Go | "is this leaked credential *live*?" (network verification) |
-| [secrecy](https://crates.io/crates/secrecy) | Rust library | "how do I *hold* a secret I already know about?" |
-| **secretshape** | Rust library | **"does this arbitrary string *look like* a secret?"** |
+| Tool                                                        | What it is   | What it answers                                            |
+|-------------------------------------------------------------|--------------|------------------------------------------------------------|
+| [gitleaks](https://github.com/gitleaks/gitleaks)            | CLI, Go      | "is this repo/git-history clean?"                          |
+| [ripsecrets](https://github.com/sirwart/ripsecrets)         | CLI, Rust    | "am I about to commit a secret?"                           |
+| [trufflehog](https://github.com/trufflesecurity/trufflehog) | CLI, Go      | "is this leaked credential *live*?" (network verification) |
+| [secrecy](https://crates.io/crates/secrecy)                 | Rust library | "how do I *hold* a secret I already know about?"           |
+| **secretshape**                                             | Rust library | **"does this arbitrary string *look like* a secret?"**     |
 
 No file walking, no git, no network, no CLI — callers own I/O; this crate judges text.
 (Some rule patterns are adapted from gitleaks' MIT-licensed rule set, with attribution
@@ -129,10 +129,10 @@ in the source.)
 
 ## Features & MSRV
 
-| Feature | Default | Brings |
-|---------|---------|--------|
-| `rules` | ✔ | `scan`, `Scanner`, `Finding`, `Severity`, `redact` (dep: `regex`) |
-| `serde` | ✘ | `Serialize`/`Deserialize` on `Finding`/`Severity` (dep: `serde`) |
+| Feature | Default | Brings                                                            |
+|---------|---------|-------------------------------------------------------------------|
+| `rules` | ✔       | `scan`, `Scanner`, `Finding`, `Severity`, `redact` (dep: `regex`) |
+| `serde` | ✘       | `Serialize`/`Deserialize` on `Finding`/`Severity` (dep: `serde`)  |
 
 `default-features = false` leaves a dependency-free crate exposing just
 `is_probably_secret` — small enough for the hot path of a clipboard hook.
@@ -143,17 +143,17 @@ MSRV: **Rust 1.74** (checked in CI; bumping it is a minor-version event).
 
 Criterion, Windows 11 dev box (2026-07), `cargo bench --bench detect`:
 
-| Benchmark | Time |
-|-----------|------|
-| `is_probably_secret` — vendor token (prefix hit) | ~4 ns |
-| `is_probably_secret` — short prose / 1 KiB paste | ~57–60 ns |
-| `is_probably_secret` — URL | ~84 ns |
-| `is_probably_secret` — opaque token (entropy path, worst case) | ~273 ns |
-| `scan` — clean 8 KiB line, all 50 rules | ~19.4 µs |
-| `scan` — dirty 8 KiB line (2 secrets) | ~20.4 µs |
-| `scan` — clean 8 KiB line, `include_heuristics(true)` | ~43.9 µs |
-| `redact` — clean line (borrow-through) | ~465 ns |
-| `redact` — dirty line | ~1.5 µs |
+| Benchmark                                                      | Time      |
+|----------------------------------------------------------------|-----------|
+| `is_probably_secret` — vendor token (prefix hit)               | ~4 ns     |
+| `is_probably_secret` — short prose / 1 KiB paste               | ~57–60 ns |
+| `is_probably_secret` — URL                                     | ~84 ns    |
+| `is_probably_secret` — opaque token (entropy path, worst case) | ~273 ns   |
+| `scan` — clean 8 KiB line, all 50 rules                        | ~19.4 µs  |
+| `scan` — dirty 8 KiB line (2 secrets)                          | ~20.4 µs  |
+| `scan` — clean 8 KiB line, `include_heuristics(true)`          | ~43.9 µs  |
+| `redact` — clean line (borrow-through)                         | ~465 ns   |
+| `redact` — dirty line                                          | ~1.5 µs   |
 
 Targets were Tier 1 < 1 µs on typical clips and Tier 2 < 50 µs per 8 KiB line — both
 met with margin, which is why there is no `RegexSet` prefilter: the added complexity
