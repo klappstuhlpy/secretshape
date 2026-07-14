@@ -7,31 +7,90 @@
 //! and CI checks — anywhere the question is "should this text be kept / shown /
 //! sent?", not "is this repository clean?".
 //!
-//! Two tiers:
-//! - [`is_probably_secret`] — a dependency-free yes/no fast path that errs toward
-//!   *dropping* (a history that quietly keeps an API key is worse than one that
-//!   quietly forgets a hash).
-//! - `scan` (feature `rules`) — the severity-tagged provider rule engine, tuned
-//!   for a low false-positive rate, yielding structured findings.
+//! # Two tiers, opposite error budgets
 //!
-//! Status: pre-0.1 skeleton. The implementation plan lives in `.claude/PLAN.md`;
-//! the reference implementations being merged are funke's clipboard guard and
-//! klappstuhl.me's filesystem secret scanner.
+//! | Tier | Cost | Deps | Errs toward | Use |
+//! |------|------|------|-------------|-----|
+//! | [`is_probably_secret`] | ~µs | none | **flagging** (a kept API key is worse than a forgotten hash) | drop/keep decisions |
+//! | [`scan`] / [`redact`] (feature `rules`) | one regex pass | `regex` | **silence** (a finding pages a human) | reporting, redaction, dashboards |
+//!
+//! The tiers are calibrated against each other on purpose — don't expect them to
+//! agree. The bool says "drop it" far more often than the rule engine says "alert".
+//!
+//! # Tier 1 — the dependency-free bool
+//!
+//! ```
+//! // A clipboard manager deciding keep-or-drop:
+//! assert!(secretshape::is_probably_secret("ghp_16C7e42F292c6912E7710c838347Ae178B4a"));
+//! assert!(secretshape::is_probably_secret("Xk7pQm2Rv9Ls4Tz8Wn3Yb6Hd")); // opaque, high entropy
+//!
+//! // …without forgetting the things people copy all day:
+//! assert!(!secretshape::is_probably_secret("https://github.com/klappstuhlpy/funke/releases/tag/v0.3.1"));
+//! assert!(!secretshape::is_probably_secret("cargo clippy --workspace -- -D warnings"));
+//! ```
+//!
+//! # Tier 2 — structured findings and redaction (feature `rules`, on by default)
+//!
+#![cfg_attr(
+    feature = "rules",
+    doc = r#"```
+// A log line on its way to a sink nobody fully controls:
+let line = "auth retry with ghp_16C7e42F292c6912E7710c838347Ae178B4a failed twice";
+
+let findings = secretshape::scan(line);
+assert_eq!(findings[0].rule, "GitHub Token");
+assert_eq!(findings[0].severity, secretshape::Severity::Critical);
+// Findings carry byte spans, not the secret itself — slice if you accept the risk.
+assert_eq!(&line[findings[0].span.clone()], "ghp_16C7e42F292c6912E7710c838347Ae178B4a");
+
+assert_eq!(
+    secretshape::redact(line),
+    "auth retry with [REDACTED:GitHub Token] failed twice"
+);
+```
+
+See [`Scanner`] for custom rules, rule removal, the opt-in entropy pass and input
+caps; the full rule table lives in the [`rules`] module docs.
+"#
+)]
+//! # What this cannot catch — honestly
+//!
+//! - **Short human passwords.** `Sommer2024!` is a word with a number on the end;
+//!   nothing about its shape distinguishes it from prose. If you manage passwords,
+//!   exclude them upstream (clipboard exclusion markers, vault hygiene) — shape
+//!   analysis will not save you.
+//! - **Novel token formats.** A provider that launches tomorrow with an unprefixed
+//!   32-char token is invisible to the rule tier until a rule lands (the entropy
+//!   heuristic may still catch it, at Tier-1 precision).
+//! - **Secrets split across lines.** Both tiers judge the text they are given; a key
+//!   pasted as two halves is two innocent-looking strings.
+//! - **Truth.** This crate judges *shape*, never validity — it does not (and will
+//!   not) call provider APIs to verify a match is live.
+//!
+//! # Features
+//!
+//! - `rules` *(default)* — the provider rule engine: [`scan`], [`Scanner`],
+//!   [`Finding`], [`Severity`], [`redact`]. Pulls in `regex`.
+//! - `serde` — `Serialize`/`Deserialize` on [`Finding`] and [`Severity`].
+//!
+//! With `--no-default-features` the crate is dependency-free and exposes just
+//! [`is_probably_secret`] — small enough for the hot path of a clipboard hook.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-/// Is this text shaped like a credential?
-///
-/// Placeholder — ported from `funke-clipboard/src/secret.rs` in Phase 1 of the
-/// plan. Always returns `false` until then so nothing accidentally ships against
-/// the stub.
-pub fn is_probably_secret(_text: &str) -> bool {
-    unimplemented!("Phase 1 of .claude/PLAN.md: port the funke heuristic tier")
-}
+mod heuristics;
+#[cfg(feature = "rules")]
+mod redact;
+#[cfg(feature = "rules")]
+pub mod rules;
+#[cfg(feature = "rules")]
+mod scan;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn skeleton_compiles() {}
-}
+pub use heuristics::is_probably_secret;
+#[cfg(feature = "rules")]
+pub use redact::{redact, redact_with, RedactOptions};
+#[cfg(feature = "rules")]
+pub use rules::{builtin_rules, Rule, Severity};
+#[cfg(feature = "rules")]
+pub use scan::{scan, Finding, InvalidPattern, Scanner};
